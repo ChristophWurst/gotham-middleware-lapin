@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Christoph Wurst <christoph@winzerhof-wurst.at>"]
 
 [dependencies]
+amq-protocol = "0.19"
 futures = "0.1"
 gotham = "0.2"
 gotham_derive = "0.2"
