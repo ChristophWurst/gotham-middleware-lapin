@@ -29,7 +29,13 @@ pub struct LapinChannel {
 }
 
 impl LapinChannel {
-    pub fn channel<CB>(&self, handle: &Handle, cb: CB) -> Box<Future<Item = (), Error = io::Error>>
+    pub fn queue<CB>(
+        &self,
+        handle: &Handle,
+        exchange: &'static str,
+        queue: &'static str,
+        cb: CB,
+    ) -> Box<Future<Item = (), Error = io::Error>>
     where
         CB: FnOnce(Channel<TcpStream>) -> Box<Future<Item = Channel<TcpStream>, Error = io::Error>>
             + 'static,
@@ -58,39 +64,39 @@ impl LapinChannel {
 
                     client.create_confirm_channel(ConfirmSelectOptions::default())
                 })
-                .and_then(|channel| {
+                .and_then(move |channel| {
                     let id = channel.id;
                     println!("created channel with id: {}", id);
 
                     channel
-                        .queue_declare("raw", &QueueDeclareOptions::default(), &FieldTable::new())
+                        .queue_declare(queue, &QueueDeclareOptions::default(), &FieldTable::new())
                         .map(|_| channel)
                 })
-                .and_then(|channel| {
-                    println!("channel {} declared queue {}", channel.id, "raw");
+                .and_then(move |channel| {
+                    println!("channel {} declared queue {}", channel.id, queue);
                     channel
                         .exchange_declare(
-                            "raw_ex",
+                            exchange,
                             "direct",
                             &ExchangeDeclareOptions::default(),
                             &FieldTable::new(),
                         )
                         .map(|_| channel)
                 })
-                .and_then(|channel| {
-                    println!("channel {} declared exchange {}", channel.id, "raw_ex");
+                .and_then(move |channel| {
+                    println!("channel {} declared exchange {}", channel.id, exchange);
                     channel
                         .queue_bind(
-                            "raw",
-                            "raw_ex",
-                            "raw_2",
+                            queue,
+                            exchange,
+                            queue,
                             &QueueBindOptions::default(),
                             &FieldTable::new(),
                         )
                         .map(|_| channel)
                 })
-                .and_then(|channel| {
-                    println!("channel {} bound queue {}", channel.id, "raw");
+                .and_then(move |channel| {
+                    println!("channel {} bound queue {}", channel.id, queue);
 
                     cb(channel)
                 })

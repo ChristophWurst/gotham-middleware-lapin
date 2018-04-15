@@ -23,11 +23,11 @@ use tokio_core::reactor::Handle;
 pub fn say_hello(mut state: State) -> Box<HandlerFuture> {
     let sending = {
         let handle = Handle::take_from(&mut state);
-        LapinChannel::borrow_from(&state).channel(&handle, |channel| {
+        LapinChannel::borrow_from(&state).queue(&handle, "hello_ex", "hello_queue", |channel| {
             let f = channel
                 .basic_publish(
-                    "raw_ex",
-                    "raw_2",
+                    "hello_ex",
+                    "hello_queue",
                     format!("hello").as_bytes(),
                     &BasicPublishOptions::default(),
                     BasicProperties::default(),
