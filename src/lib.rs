@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use amq_protocol::types::FieldTable;
 use futures::{future, Future};
 use gotham::middleware::{Middleware, NewMiddleware};
-use gotham::state::{request_id, State};
+use gotham::state::{request_id, FromState, State};
 use gotham::handler::HandlerFuture;
 use lapin::client::ConnectionOptions;
 use lapin::channel::{Channel, ConfirmSelectOptions, ExchangeDeclareOptions, QueueBindOptions,
@@ -24,6 +24,7 @@ use tokio_core::{net::TcpStream, reactor::Handle};
 
 #[derive(StateData)]
 pub struct LapinChannel {
+    handle: Handle,
     addr: SocketAddr,
     channel: Arc<Mutex<Option<Channel<TcpStream>>>>,
 }
@@ -31,7 +32,6 @@ pub struct LapinChannel {
 impl LapinChannel {
     pub fn queue<CB>(
         &self,
-        handle: &Handle,
         exchange: &'static str,
         queue: &'static str,
         cb: CB,
@@ -40,7 +40,7 @@ impl LapinChannel {
         CB: FnOnce(Channel<TcpStream>) -> Box<Future<Item = Channel<TcpStream>, Error = io::Error>>
             + 'static,
     {
-        let handle = handle.clone();
+        let handle = self.handle.clone();
         let channel = self.channel.lock().unwrap();
         if let Some(ref channel) = *channel {
             println!("channel {} available", channel.id);
@@ -143,7 +143,9 @@ impl Middleware for LapinMiddleware {
         Chain: FnOnce(State) -> Box<HandlerFuture>,
     {
         debug!("[{}] pre chain", request_id(&state));
+        let handle = Handle::take_from(&mut state).clone();
         state.put(LapinChannel {
+            handle: handle,
             addr: self.addr.clone(),
             channel: self.channel.clone(),
         });

@@ -18,40 +18,36 @@ use gotham::pipeline::new_pipeline;
 use gotham::pipeline::single::single_pipeline;
 use gotham_middleware_lapin::{LapinChannel, LapinMiddleware};
 use lapin::channel::{BasicProperties, BasicPublishOptions};
-use tokio_core::reactor::Handle;
 
-pub fn say_hello(mut state: State) -> Box<HandlerFuture> {
-    let sending = {
-        let handle = Handle::take_from(&mut state);
-        LapinChannel::borrow_from(&state).queue(&handle, "hello_ex", "hello_queue", |channel| {
-            let f = channel
-                .basic_publish(
-                    "hello_ex",
-                    "hello_queue",
-                    format!("hello").as_bytes(),
-                    &BasicPublishOptions::default(),
-                    BasicProperties::default(),
-                )
-                .and_then(|_| future::ok(channel));
+pub fn say_hello(state: State) -> Box<HandlerFuture> {
+    Box::new(
+        LapinChannel::borrow_from(&state)
+            .queue("hello_ex", "hello_queue", |channel| {
+                let f = channel
+                    .basic_publish(
+                        "hello_ex",
+                        "hello_queue",
+                        format!("hello").as_bytes(),
+                        &BasicPublishOptions::default(),
+                        BasicProperties::default(),
+                    )
+                    .and_then(|_| future::ok(channel));
 
-            Box::new(f)
-        })
-    };
+                Box::new(f)
+            })
+            .then(|res| {
+                if let Err(err) = res {
+                    println!("error sending message: {}", err);
+                }
 
-    let f = sending.then(|res| {
-        if let Err(err) = res {
-            println!("error sending message: {}", err);
-        }
-
-        let res = create_response(
-            &state,
-            StatusCode::Ok,
-            Some((String::from("Hello, Lapin!").into_bytes(), mime::TEXT_PLAIN)),
-        );
-        Ok((state, res))
-    });
-
-    Box::new(f)
+                let res = create_response(
+                    &state,
+                    StatusCode::Ok,
+                    Some((String::from("Hello, Lapin!").into_bytes(), mime::TEXT_PLAIN)),
+                );
+                Ok((state, res))
+            }),
+    )
 }
 
 fn router() -> Router {
