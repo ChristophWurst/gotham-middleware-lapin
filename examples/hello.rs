@@ -23,17 +23,17 @@ pub fn say_hello(state: State) -> Box<HandlerFuture> {
     Box::new(
         LapinChannel::borrow_from(&state)
             .queue("hello_ex", "hello_queue", |channel| {
-                let f = channel
-                    .basic_publish(
-                        "hello_ex",
-                        "hello_queue",
-                        format!("hello").as_bytes(),
-                        &BasicPublishOptions::default(),
-                        BasicProperties::default(),
-                    )
-                    .and_then(|_| future::ok(channel));
-
-                Box::new(f)
+                Box::new(
+                    channel
+                        .basic_publish(
+                            "hello_ex",
+                            "hello_queue",
+                            format!("hello").as_bytes(),
+                            &BasicPublishOptions::default(),
+                            BasicProperties::default(),
+                        )
+                        .and_then(|_| future::ok(channel)),
+                )
             })
             .then(|res| {
                 if let Err(err) = res {
