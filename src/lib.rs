@@ -10,10 +10,9 @@ extern crate tokio_core;
 
 use std::io;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
 
 use amq_protocol::types::FieldTable;
-use futures::{future, Future};
+use futures::Future;
 use gotham::middleware::{Middleware, NewMiddleware};
 use gotham::state::{request_id, FromState, State};
 use gotham::handler::HandlerFuture;
@@ -26,7 +25,6 @@ use tokio_core::{net::TcpStream, reactor::Handle};
 pub struct LapinChannel {
     handle: Handle,
     addr: SocketAddr,
-    channel: Arc<Mutex<Option<Channel<TcpStream>>>>,
 }
 
 impl LapinChannel {
@@ -41,88 +39,77 @@ impl LapinChannel {
             + 'static,
     {
         let handle = self.handle.clone();
-        let channel = self.channel.lock().unwrap();
-        if let Some(ref channel) = *channel {
-            println!("channel {} available", channel.id);
-            Box::new(future::ok(()))
-        } else {
-            println!("no channel available, connecting to {}", self.addr);
 
-            let f = TcpStream::connect(&self.addr, &handle)
-                .and_then(|stream| {
-                    lapin::client::Client::connect(
-                        stream,
-                        &ConnectionOptions {
-                            frame_max: 65535,
-                            ..Default::default()
-                        },
+        let f = TcpStream::connect(&self.addr, &handle)
+            .and_then(|stream| {
+                lapin::client::Client::connect(
+                    stream,
+                    &ConnectionOptions {
+                        frame_max: 65535,
+                        ..Default::default()
+                    },
+                )
+            })
+            .and_then(move |(client, heartbeat_future_fn)| {
+                let heartbeat_client = client.clone();
+                handle.spawn(heartbeat_future_fn(&heartbeat_client).map_err(|_| ()));
+
+                client.create_confirm_channel(ConfirmSelectOptions::default())
+            })
+            .and_then(move |channel| {
+                let id = channel.id;
+                println!("created channel with id: {}", id);
+
+                channel
+                    .queue_declare(queue, &QueueDeclareOptions::default(), &FieldTable::new())
+                    .map(|_| channel)
+            })
+            .and_then(move |channel| {
+                println!("channel {} declared queue {}", channel.id, queue);
+                channel
+                    .exchange_declare(
+                        exchange,
+                        "direct",
+                        &ExchangeDeclareOptions::default(),
+                        &FieldTable::new(),
                     )
-                })
-                .and_then(move |(client, heartbeat_future_fn)| {
-                    let heartbeat_client = client.clone();
-                    handle.spawn(heartbeat_future_fn(&heartbeat_client).map_err(|_| ()));
+                    .map(|_| channel)
+            })
+            .and_then(move |channel| {
+                println!("channel {} declared exchange {}", channel.id, exchange);
+                channel
+                    .queue_bind(
+                        queue,
+                        exchange,
+                        queue,
+                        &QueueBindOptions::default(),
+                        &FieldTable::new(),
+                    )
+                    .map(|_| channel)
+            })
+            .and_then(move |channel| {
+                println!("channel {} bound queue {}", channel.id, queue);
 
-                    client.create_confirm_channel(ConfirmSelectOptions::default())
-                })
-                .and_then(move |channel| {
-                    let id = channel.id;
-                    println!("created channel with id: {}", id);
+                cb(channel)
+            })
+            .and_then(|channel| {
+                println!("closing amqp connection ...");
+                channel.close(200, "Bye")
+            })
+            .and_then(|_| Ok(()));
 
-                    channel
-                        .queue_declare(queue, &QueueDeclareOptions::default(), &FieldTable::new())
-                        .map(|_| channel)
-                })
-                .and_then(move |channel| {
-                    println!("channel {} declared queue {}", channel.id, queue);
-                    channel
-                        .exchange_declare(
-                            exchange,
-                            "direct",
-                            &ExchangeDeclareOptions::default(),
-                            &FieldTable::new(),
-                        )
-                        .map(|_| channel)
-                })
-                .and_then(move |channel| {
-                    println!("channel {} declared exchange {}", channel.id, exchange);
-                    channel
-                        .queue_bind(
-                            queue,
-                            exchange,
-                            queue,
-                            &QueueBindOptions::default(),
-                            &FieldTable::new(),
-                        )
-                        .map(|_| channel)
-                })
-                .and_then(move |channel| {
-                    println!("channel {} bound queue {}", channel.id, queue);
-
-                    cb(channel)
-                })
-                .and_then(|channel| {
-                    println!("closing amqp connection …");
-                    channel.close(200, "Bye")
-                })
-                .and_then(|_| Ok(()));
-
-            Box::new(f)
-        }
+        Box::new(f)
     }
 }
 
 /// A Gotham compatible Middleware that lets you dispatch messages to an AMQP queue.
 pub struct LapinMiddleware {
     addr: SocketAddr,
-    channel: Arc<Mutex<Option<Channel<TcpStream>>>>,
 }
 
 impl LapinMiddleware {
     pub fn new(addr: SocketAddr) -> Self {
-        LapinMiddleware {
-            addr: addr,
-            channel: Arc::new(Mutex::new(None)),
-        }
+        LapinMiddleware { addr: addr }
     }
 }
 
@@ -132,7 +119,6 @@ impl NewMiddleware for LapinMiddleware {
     fn new_middleware(&self) -> io::Result<Self::Instance> {
         Ok(LapinMiddleware {
             addr: self.addr.clone(),
-            channel: self.channel.clone(),
         })
     }
 }
@@ -147,7 +133,6 @@ impl Middleware for LapinMiddleware {
         state.put(LapinChannel {
             handle: handle,
             addr: self.addr.clone(),
-            channel: self.channel.clone(),
         });
 
         Box::new(chain(state))
