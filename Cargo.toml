@@ -8,7 +8,7 @@ amq-protocol = "0.19"
 futures = "0.1"
 gotham = "0.2"
 gotham_derive = "0.2"
-lapin-futures = "0.11.1"
+lapin-futures = "0.12.0"
 log = "*"
 tokio-core = "*"
 
